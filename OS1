@@ -1,0 +1,185 @@
+import torch
+import torch.nn as nn
+from typing import Dict, Any, Optional, List, Tuple
+import numpy as np
+from datetime import datetime
+
+class CloudInstance:
+    """Individual Cloud instance that can be deployed and evolved"""
+    def __init__(self, instance_id: str, embedding_dim: int = 768):
+        self.instance_id = instance_id
+        self.creation_time = datetime.now()
+        self.embedding_dim = embedding_dim
+        self.knowledge_state = torch.zeros(embedding_dim)
+        self.evolution_history = []
+        
+    def update_knowledge(self, new_knowledge: torch.Tensor):
+        """Update instance knowledge state"""
+        self.knowledge_state = 0.7 * self.knowledge_state + 0.3 * new_knowledge
+        self.evolution_history.append({
+            'timestamp': datetime.now(),
+            'knowledge_diff': torch.norm(new_knowledge - self.knowledge_state).item()
+        })
+
+class CloudEvolutionEngine(nn.Module):
+    """Neural network for evolving Cloud instances"""
+    def __init__(self, embedding_dim: int = 768):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        
+        # Evolution layers
+        self.knowledge_encoder = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 2),
+            nn.LayerNorm(embedding_dim * 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * 2, embedding_dim)
+        )
+        
+        self.evolution_generator = nn.Sequential(
+            nn.Linear(embedding_dim * 2, embedding_dim * 2),
+            nn.LayerNorm(embedding_dim * 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * 2, embedding_dim)
+        )
+        
+    def forward(self, current_state: torch.Tensor, new_knowledge: torch.Tensor) -> torch.Tensor:
+        """Generate evolved state from current state and new knowledge"""
+        encoded_current = self.knowledge_encoder(current_state)
+        combined = torch.cat([encoded_current, new_knowledge], dim=-1)
+        evolved_state = self.evolution_generator(combined)
+        return evolved_state
+
+class CloudModule:
+    """OS1 module for managing Cloud instances and evolution"""
+    def __init__(self, config: Dict[str, Any] = None):
+        if config is None:
+            config = {
+                'max_instances': 5,
+                'embedding_dim': 768,
+                'evolution_threshold': 0.1,
+                'integration_rate': 0.3
+            }
+            
+        self.config = config
+        self.instances: Dict[str, CloudInstance] = {}
+        self.evolution_engine = CloudEvolutionEngine(config['embedding_dim'])
+        self.cloud1_buffer = []  # Buffer for Cloud1 knowledge returns
+        
+    def create_instance(self, instance_id: str) -> CloudInstance:
+        """Create new Cloud instance"""
+        if len(self.instances) >= self.config['max_instances']:
+            # Remove oldest instance if at capacity
+            oldest = min(self.instances.values(), key=lambda x: x.creation_time)
+            del self.instances[oldest.instance_id]
+            
+        instance = CloudInstance(instance_id, self.config['embedding_dim'])
+        self.instances[instance_id] = instance
+        return instance
+    
+    def receive_cloud1_knowledge(self, knowledge_data: Dict[str, Any]):
+        """Process and buffer knowledge received from Cloud1"""
+        processed_knowledge = self._process_cloud1_data(knowledge_data)
+        self.cloud1_buffer.append({
+            'timestamp': datetime.now(),
+            'knowledge': processed_knowledge,
+            'source_data': knowledge_data
+        })
+        
+        # Trigger evolution if buffer reaches threshold
+        if len(self.cloud1_buffer) >= 5:  # Arbitrary threshold
+            self._evolve_from_buffer()
+    
+    def _process_cloud1_data(self, data: Dict[str, Any]) -> torch.Tensor:
+        """Convert Cloud1 knowledge data to tensor representation"""
+        # Extract relevant features from Cloud1 data
+        features = []
+        
+        # Process learning history
+        if 'learning_history' in data:
+            history_embedding = self._embed_learning_history(data['learning_history'])
+            features.append(history_embedding)
+            
+        # Process knowledge base
+        if 'knowledge_base' in data:
+            knowledge_embedding = self._embed_knowledge_base(data['knowledge_base'])
+            features.append(knowledge_embedding)
+            
+        # Combine features
+        combined = torch.cat(features, dim=-1)
+        return combined
+    
+    def _evolve_from_buffer(self):
+        """Evolve instances using buffered knowledge"""
+        # Combine buffered knowledge
+        combined_knowledge = torch.stack([item['knowledge'] for item in self.cloud1_buffer]).mean(dim=0)
+        
+        # Evolve each instance
+        for instance in self.instances.values():
+            evolved_state = self.evolution_engine(
+                instance.knowledge_state.unsqueeze(0),
+                combined_knowledge.unsqueeze(0)
+            )
+            instance.update_knowledge(evolved_state.squeeze(0))
+            
+        # Clear buffer
+        self.cloud1_buffer = []
+
+class CloudIntegrationLayer:
+    """Layer for integrating Cloud module with OS1's neural network"""
+    def __init__(self, cloud_module: CloudModule):
+        self.cloud_module = cloud_module
+        self.integration_weights = nn.Parameter(torch.ones(768))  # Matches OS1 embedding dim
+        
+    def forward(self, os1_state: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Integrate Cloud knowledge with OS1 state"""
+        # Aggregate knowledge from all Cloud instances
+        cloud_knowledge = self._aggregate_cloud_knowledge()
+        
+        # Compute weighted integration
+        integrated_state = os1_state + self.integration_weights * cloud_knowledge
+        
+        # Prepare metadata about integration
+        metadata = {
+            'num_instances': len(self.cloud_module.instances),
+            'buffer_size': len(self.cloud_module.cloud1_buffer),
+            'integration_strength': self.integration_weights.mean().item()
+        }
+        
+        return integrated_state, metadata
+    
+    def _aggregate_cloud_knowledge(self) -> torch.Tensor:
+        """Aggregate knowledge from all Cloud instances"""
+        if not self.cloud_module.instances:
+            return torch.zeros(768)
+            
+        knowledge_states = [
+            instance.knowledge_state 
+            for instance in self.cloud_module.instances.values()
+        ]
+        return torch.stack(knowledge_states).mean(dim=0)
+
+# Update OS1's EnhancedNeuralNetwork to include Cloud module
+class EnhancedNeuralNetwork(nn.Module):
+    def __init__(self, pretrained_model_name="bert-base-uncased"):
+        super().__init__()
+        # ... (existing OS1 initialization) ...
+        
+        # Add Cloud module
+        self.cloud_module = CloudModule()
+        self.cloud_integration = CloudIntegrationLayer(self.cloud_module)
+        
+    def forward(self, input_data, task_type=None, enhanced_prompt=None):
+        # Get initial output from existing forward pass
+        initial_output = super().forward(input_data, task_type, enhanced_prompt)
+        
+        # Integrate with Cloud knowledge
+        integrated_output, cloud_metadata = self.cloud_integration(initial_output)
+        
+        # Log integration metadata
+        logger.debug(f"Cloud integration metadata: {cloud_metadata}")
+        
+        return integrated_output
+    
+    def receive_cloud1_knowledge(self, knowledge_data: Dict[str, Any]):
+        """Receive and process knowledge from Cloud1"""
+        self.cloud_module.receive_cloud1_knowledge(knowledge_data)
