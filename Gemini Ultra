@@ -1,0 +1,291 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from typing import Dict, Any, List, Tuple
+import numpy as np
+from datetime import datetime
+import logging
+
+# For text embeddings
+from transformers import AutoTokenizer, AutoModel
+# For Gemini API interactions
+import google.generativeai as genai
+
+# -------------------------------
+# Setup Logging & Gemini API Key
+# -------------------------------
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+GENAI_API_KEY = "YOUR_GEMINI_API_KEY"  # Replace with your actual Gemini API key
+genai.configure(api_key=GENAI_API_KEY)
+
+# -------------------------------
+# LLMEmbedder: Extracting rich text features
+# -------------------------------
+class LLMEmbedder:
+    """Embedder using a pretrained LLM to extract rich text features."""
+    def __init__(self, model_name: str = "distilbert-base-uncased"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.model.eval()
+
+    def embed(self, text: str) -> torch.Tensor:
+        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0)
+        return embedding
+
+# -------------------------------
+# Cloud1.1: The Knowledge Spaceship Components
+# -------------------------------
+class CloudInstance:
+    """An individual cloud instance that evolves its knowledge state."""
+    def __init__(self, instance_id: str, embedding_dim: int = 768):
+        self.instance_id = instance_id
+        self.creation_time = datetime.now()
+        self.embedding_dim = embedding_dim
+        self.knowledge_state = torch.zeros(embedding_dim)
+        self.evolution_history = []
+
+    def update_knowledge(self, new_knowledge: torch.Tensor):
+        self.knowledge_state = 0.7 * self.knowledge_state + 0.3 * new_knowledge
+        self.evolution_history.append({
+            'timestamp': datetime.now(),
+            'knowledge_diff': torch.norm(new_knowledge - self.knowledge_state).item()
+        })
+
+class CloudEvolutionEngine(nn.Module):
+    """Evolves cloud instances by blending in new knowledge."""
+    def __init__(self, embedding_dim: int = 768):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.knowledge_encoder = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 2),
+            nn.LayerNorm(embedding_dim * 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * 2, embedding_dim)
+        )
+        self.evolution_generator = nn.Sequential(
+            nn.Linear(embedding_dim * 2, embedding_dim * 2),
+            nn.LayerNorm(embedding_dim * 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * 2, embedding_dim)
+        )
+
+    def forward(self, current_state: torch.Tensor, new_knowledge: torch.Tensor) -> torch.Tensor:
+        encoded_current = self.knowledge_encoder(current_state)
+        combined = torch.cat([encoded_current, new_knowledge], dim=-1)
+        evolved_state = self.evolution_generator(combined)
+        return evolved_state
+
+# -------------------------------
+# CloudModule: Manages Cloud Instances and Evolution
+# -------------------------------
+class CloudModule:
+    """
+    Manages Cloud1.1 by creating CloudInstance objects,
+    buffering incoming knowledge, and evolving instances.
+    """
+    def __init__(self, config: Dict[str, Any] = None):
+        if config is None:
+            config = {'max_instances': 5, 'embedding_dim': 768}
+        self.config = config
+        self.instances: Dict[str, CloudInstance] = {}
+        self.evolution_engine = CloudEvolutionEngine(config['embedding_dim'])
+        self.cloud_buffer = []  # Buffer for incoming knowledge signals
+        self.llm_embedder = LLMEmbedder("distilbert-base-uncased")
+
+    def create_instance(self, instance_id: str) -> CloudInstance:
+        if len(self.instances) >= self.config['max_instances']:
+            oldest = min(self.instances.values(), key=lambda x: x.creation_time)
+            del self.instances[oldest.instance_id]
+        instance = CloudInstance(instance_id, self.config['embedding_dim'])
+        self.instances[instance_id] = instance
+        return instance
+
+    def receive_knowledge(self, knowledge_data: Dict[str, Any]):
+        processed = self._process_knowledge_data(knowledge_data)
+        self.cloud_buffer.append({
+            'timestamp': datetime.now(),
+            'knowledge': processed,
+            'source_data': knowledge_data
+        })
+        if len(self.cloud_buffer) >= 5:
+            self._evolve_from_buffer()
+
+    def _process_knowledge_data(self, data: Dict[str, Any]) -> torch.Tensor:
+        features = []
+        embed_dim = self.config['embedding_dim']
+        if 'learning_history' in data:
+            features.append(torch.randn(embed_dim))
+        if 'knowledge_base' in data:
+            features.append(torch.randn(embed_dim))
+        if 'llm_training_data' in data:
+            texts = data['llm_training_data']
+            embeddings = [self.llm_embedder.embed(text) for text in texts]
+            features.append(torch.stack(embeddings).mean(dim=0))
+        if features:
+            combined = torch.stack(features).mean(dim=0)
+        else:
+            combined = torch.zeros(embed_dim)
+        return combined
+
+    def _evolve_from_buffer(self):
+        combined_knowledge = torch.stack([item['knowledge'] for item in self.cloud_buffer]).mean(dim=0)
+        for instance in self.instances.values():
+            evolved_state = self.evolution_engine(
+                instance.knowledge_state.unsqueeze(0),
+                combined_knowledge.unsqueeze(0)
+            )
+            instance.update_knowledge(evolved_state.squeeze(0))
+        self.cloud_buffer = []
+
+# -------------------------------
+# OS1: The Mother Ship Components
+# -------------------------------
+class OS1BaseNetwork(nn.Module):
+    """A simple network representing OS1's core processing."""
+    def __init__(self, input_dim: int = 512, embedding_dim: int = 768):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, embedding_dim)
+        self.activation = nn.ReLU()
+
+    def forward(self, x, task_type=None, enhanced_prompt=None):
+        return self.activation(self.linear(x))
+
+class CloudIntegrationLayer(nn.Module):
+    """
+    Integrates evolved Cloud1.1 knowledge into the OS1 state.
+    """
+    def __init__(self, cloud_module: CloudModule):
+        super().__init__()
+        self.cloud_module = cloud_module
+        self.integration_weights = nn.Parameter(torch.ones(cloud_module.config['embedding_dim']))
+
+    def forward(self, os1_state: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        embed_dim = self.cloud_module.config['embedding_dim']
+        if not self.cloud_module.instances:
+            cloud_knowledge = torch.zeros(embed_dim)
+        else:
+            states = [inst.knowledge_state for inst in self.cloud_module.instances.values()]
+            cloud_knowledge = torch.stack(states).mean(dim=0)
+        integrated = os1_state + self.integration_weights * cloud_knowledge
+        metadata = {
+            'num_instances': len(self.cloud_module.instances),
+            'buffer_size': len(self.cloud_module.cloud_buffer),
+            'integration_strength': self.integration_weights.mean().item()
+        }
+        return integrated, metadata
+
+class EnhancedNeuralNetwork(OS1BaseNetwork):
+    """
+    OS1 (Mother Ship) that integrates evolving knowledge from Cloud1.1.
+    """
+    def __init__(self, input_dim: int = 512, embedding_dim: int = 768):
+        super().__init__(input_dim, embedding_dim)
+        self.cloud_module = CloudModule({'max_instances': 5, 'embedding_dim': embedding_dim})
+        self.cloud_integration = CloudIntegrationLayer(self.cloud_module)
+
+    def forward(self, input_data, task_type=None, enhanced_prompt=None):
+        base_out = super().forward(input_data, task_type, enhanced_prompt)
+        integrated, metadata = self.cloud_integration(base_out)
+        logger.debug(f"Cloud integration metadata: {metadata}")
+        return integrated
+
+    def receive_knowledge(self, knowledge_data: Dict[str, Any]):
+        self.cloud_module.receive_knowledge(knowledge_data)
+
+# -------------------------------
+# CloudChatterbox: Interactive Prompt Using Gemini with Chain-of-Thought
+# -------------------------------
+class CloudChatterbox:
+    """
+    An interactive prompt system using Google Gemini that goes beyond the basic Q&A.
+    It uses a chain-of-thought approach: first generating a detailed reasoning, then a final, mind-blowing answer.
+    Maintains short-term memory and can export insights to OS1.
+    """
+    def __init__(self, memory_capacity: int = 10):
+        self.memory = []
+        self.memory_capacity = memory_capacity
+
+    def badass_interact(self, prompt: str) -> str:
+        try:
+            # Step 1: Generate chain-of-thought reasoning
+            cot_prompt = f"Think deeply and provide a detailed, step-by-step chain-of-thought for the following query:\n\"{prompt}\""
+            model = genai.GenerativeModel("gemini-pro")
+            cot_response = model.generate_content(cot_prompt)
+            cot_text = cot_response.text.strip()
+            
+            # Step 2: Generate final answer using the chain-of-thought
+            final_prompt = (f"Using the following chain-of-thought:\n{cot_text}\n"
+                            f"Now, craft a brilliant, mind-blowing response to the query:\n\"{prompt}\"")
+            final_response = model.generate_content(final_prompt)
+            final_text = final_response.text.strip()
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            final_text = "Error in Gemini API call."
+        
+        self._store_message("user", prompt)
+        self._store_message("assistant", final_text)
+        return final_text
+
+    def _store_message(self, role: str, text: str):
+        timestamp = datetime.now().isoformat()
+        self.memory.append({"role": role, "timestamp": timestamp, "text": text})
+        if len(self.memory) > self.memory_capacity:
+            self.memory.pop(0)
+
+    def get_memory_summary(self) -> str:
+        summary = "\n".join([f"[{msg['timestamp']}] {msg['role']}: {msg['text']}" for msg in self.memory])
+        return summary
+
+    def export_memory_to_os1(self) -> Dict[str, Any]:
+        summary = self.get_memory_summary()
+        logger.info("Exporting CloudChatterbox memory to OS1:")
+        logger.info(summary)
+        return {'llm_training_data': [summary]}
+
+# -------------------------------
+# Integrated Demo
+# -------------------------------
+if __name__ == '__main__':
+    # Instantiate OS1 (Mother Ship)
+    os1_model = EnhancedNeuralNetwork(input_dim=512, embedding_dim=768)
+    
+    # Create a few Cloud1.1 instances within OS1
+    for i in range(3):
+        os1_model.cloud_module.create_instance(f"cloud_instance_{i}")
+    
+    # Simulate receiving a knowledge packet into Cloud1.1
+    knowledge_packet = {
+        'learning_history': ["pattern A observed", "pattern B observed"],
+        'knowledge_base': {"metric": np.random.rand()},
+        'llm_training_data': [
+            "The cosmos is encoded in data.",
+            "Every piece of information shines like a star."
+        ]
+    }
+    os1_model.receive_knowledge(knowledge_packet)
+    
+    # Use CloudChatterbox (via Gemini) for an interactive, badass session
+    chatterbox = CloudChatterbox(memory_capacity=5)
+    print("Badass Interaction 1:")
+    response = chatterbox.badass_interact("What mysteries lie beyond our digital horizon?")
+    print("Response:", response)
+    
+    print("\nBadass Interaction 2:")
+    response = chatterbox.badass_interact("How do neural networks mirror human thought?")
+    print("Response:", response)
+    
+    # Export CloudChatterbox memory and feed it to OS1 (and Cloud1.1)
+    exported_packet = chatterbox.export_memory_to_os1()
+    os1_model.receive_knowledge(exported_packet)
+    
+    # Dummy input for OS1 (e.g. 2 samples, 512 features each)
+    dummy_input = torch.randn(2, 512)
+    final_output = os1_model(dummy_input)
+    
+    print("\nFinal integrated output shape:", final_output.shape)
+    print("Sample integrated output (first 10 values):", final_output[0][:10])
